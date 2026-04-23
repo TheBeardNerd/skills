@@ -24,32 +24,16 @@ session-handoff/
     `-- green-with-skill.md
 ```
 
-## Install (GitHub Distribution - Recommended)
-
-1. Clone this repo to your local projects directory:
+## Install
 
 ```bash
-git clone <REPO_URL> ~/Projects/session-handoff
+npx skills add TheBeardNerd/skills
 ```
 
-2. Install links for OpenCode/Codex and Claude Code:
+For non-interactive usage:
 
 ```bash
-cd ~/Projects/session-handoff
-bash ./scripts/install-skill.sh
-```
-
-3. For automation/non-interactive usage:
-
-```bash
-bash ./scripts/install-skill.sh --yes
-```
-
-## Install (Manual Local Copy)
-
-```bash
-cp -R ~/Projects/session-handoff ~/.agents/skills/session-handoff
-bash ~/.agents/skills/session-handoff/scripts/install-skill.sh
+npx skills add TheBeardNerd/skills -y
 ```
 
 ## Verify the Skill
