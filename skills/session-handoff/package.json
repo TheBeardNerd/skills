@@ -13,8 +13,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "python3 -m unittest tests/test_handoff_scripts.py",
-    "install:skill": "bash ./scripts/install-skill.sh",
-    "install:skill:yes": "bash ./scripts/install-skill.sh --yes"
+    "test": "python3 -m unittest tests/test_handoff_scripts.py"
   }
 }
