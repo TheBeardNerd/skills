@@ -27,13 +27,13 @@ session-handoff/
 ## Install
 
 ```bash
-npx skills add TheBeardNerd/skills
+npx skills add https://github.com/TheBeardNerd/skills --skill session-handoff
 ```
 
 For non-interactive usage:
 
 ```bash
-npx skills add TheBeardNerd/skills -y
+npx skills add https://github.com/TheBeardNerd/skills --skill session-handoff -y
 ```
 
 ## Verify the Skill
