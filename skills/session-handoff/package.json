@@ -3,15 +3,6 @@
   "version": "0.1.0",
   "description": "Installable agent skill package for project-local session handoffs",
   "license": "MIT",
-  "files": [
-    "SKILL.md",
-    "scripts",
-    "references",
-    "templates",
-    "tests",
-    "evals",
-    "README.md"
-  ],
   "scripts": {
     "test": "python3 -m unittest tests/test_handoff_scripts.py"
   }
