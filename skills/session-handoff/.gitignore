@@ -1,0 +1,23 @@
+.ai/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+.env.*
+
+# Common secret and certificate artifacts
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+
+# Common local secret folders/files
+secrets/
+*.secret
