@@ -23,8 +23,9 @@ Create or resume project-local handoff documents so a fresh agent can continue w
 2. Set `SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills/session-handoff}"`.
 3. Run `python3 "$SKILL_DIR/scripts/create_handoff.py" <slug>`.
 4. Fill in the required sections from [Handoff Template](./templates/handoff-template.md), using project-relative paths in `Critical Files`.
-5. Run `python3 "$SKILL_DIR/scripts/validate_handoff.py" <handoff-file>`.
-6. Report the saved path, validation result, and first next step.
+5. Commit all pending changes: `git add <changed-files> && git commit -m "<summary>"` then `git push`.
+6. Run `python3 "$SKILL_DIR/scripts/validate_handoff.py" <handoff-file>`.
+7. Report the saved path, validation result, and first next step.
 
 ## RESUME Workflow
 

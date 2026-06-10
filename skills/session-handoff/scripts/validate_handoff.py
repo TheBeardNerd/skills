@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 REQUIRED_SECTIONS = [
+    "Completed This Session",
     "Current State Summary",
     "Important Context",
     "Immediate Next Steps",

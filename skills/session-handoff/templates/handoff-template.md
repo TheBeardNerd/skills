@@ -5,6 +5,9 @@
 - Project: [PROJECT_PATH]
 - Branch: [GIT_BRANCH]
 
+## Completed This Session
+- [TODO: list what was finished, tested, or merged]
+
 ## Current State Summary
 [TODO: Summarize the current status in one short paragraph.]
 
