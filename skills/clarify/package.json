@@ -1,0 +1,9 @@
+{
+  "name": "@twc/clarify-skill",
+  "version": "0.1.0",
+  "description": "Use when the user asks to clarify, sharpen, or de-vague a prompt, or when a request is genuinely ambiguous or under-spec",
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests"
+  }
+}

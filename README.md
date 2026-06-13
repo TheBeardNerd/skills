@@ -12,6 +12,7 @@ supporting files, and an evals trio.
 | [agent-builder](skills/agent-builder) | Decides the correct structure of an AI agent (workflow vs. agent, and which pattern) and scaffolds a complete, runnable Claude-native agent — deterministic tool-use loop, tools, guardrails, and a hard validation gate. |
 | [csv-to-markdown](skills/csv-to-markdown) | Converts CSV data into a GitHub-flavored Markdown table, handling quoted fields, embedded commas/newlines, and pipe characters. |
 | [session-handoff](skills/session-handoff) | Creates and resumes project-local session handoffs so a fresh agent can pick up exactly where the last one left off. |
+| [clarify](skills/clarify) | Sharpens vague or low-effort prompts before work begins — interviews with structured questions, rewrites the request, confirms, then proceeds. Pairs with a `UserPromptSubmit` hook that triggers it only on genuinely ambiguous prompts. |
 
 ## Install
 
