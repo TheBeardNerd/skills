@@ -9,6 +9,7 @@ supporting files, and an evals trio.
 | Skill | What it does |
 |-------|--------------|
 | [skill-builder](skills/skill-builder) | Meta-skill that decides the correct structure for a new skill and builds it — scaffolds, populates, and enforces a hard validation gate before it's done. |
+| [agent-builder](skills/agent-builder) | Decides the correct structure of an AI agent (workflow vs. agent, and which pattern) and scaffolds a complete, runnable Claude-native agent — deterministic tool-use loop, tools, guardrails, and a hard validation gate. |
 | [csv-to-markdown](skills/csv-to-markdown) | Converts CSV data into a GitHub-flavored Markdown table, handling quoted fields, embedded commas/newlines, and pipe characters. |
 | [session-handoff](skills/session-handoff) | Creates and resumes project-local session handoffs so a fresh agent can pick up exactly where the last one left off. |
 
