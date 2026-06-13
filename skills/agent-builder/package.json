@@ -1,0 +1,9 @@
+{
+  "name": "@twc/agent-builder-skill",
+  "version": "0.1.0",
+  "description": "Use when the user wants to build, design, or structure an AI agent \u2014 e.g. \"build an agent that triages support tickets\",",
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests"
+  }
+}
