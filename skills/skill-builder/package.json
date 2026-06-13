@@ -1,0 +1,9 @@
+{
+  "name": "@twc/skill-builder-skill",
+  "version": "0.1.0",
+  "description": "Meta-skill that decides skill structure and builds validated Claude Skills",
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests"
+  }
+}

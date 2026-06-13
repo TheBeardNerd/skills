@@ -1,0 +1,28 @@
+---
+name: {{NAME}}
+description: {{DESCRIPTION}}
+{{ALLOWED_TOOLS_LINE}}
+---
+
+# {{TITLE}}
+
+## Overview
+
+{{One paragraph: what this skill does and the outcome it produces.}}
+
+## When to Use
+
+- {{concrete trigger 1}}
+- {{concrete trigger 2}}
+
+**When NOT to use:** {{out-of-scope cases that should stay dormant.}}
+
+## Workflow
+
+1. {{step}}
+2. {{step}}
+3. Validate the result before reporting it.
+
+## Output
+
+{{Define the exact output format, with a short example.}}

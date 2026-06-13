@@ -1,0 +1,18 @@
+# Without Skill (BASELINE)
+
+How a plain agent (skill not loaded) handles each scenario. The control for
+measuring the skill's value. Use the same prompts as the GREEN file.
+
+## Scenario 1: {{short name}}
+
+Prompt:
+
+```
+{{paste the user prompt}}
+```
+
+Observed behavior:
+
+- {{what the agent did without the skill}}
+
+Gap: {{what was missing or wrong}}

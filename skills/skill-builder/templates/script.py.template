@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""{{ONE_LINE_PURPOSE}}
+
+Usage:
+    python3 {{SCRIPT_NAME}}.py <args>
+
+Stdlib only. Logic lives in functions so tests/ can import it.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+
+def run(value: str) -> str:
+    """{{Core deterministic transform.}}"""
+    return value
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="{{ONE_LINE_PURPOSE}}")
+    parser.add_argument("value", help="{{input}}")
+    args = parser.parse_args(argv)
+    print(run(args.value))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,20 @@
+# With Skill Applied (GREEN)
+
+Passing behavior with the skill active. Mirror the BASELINE prompts exactly so the
+delta is honest. Paste real output, not aspirational output.
+
+## Scenario 1: {{short name}}
+
+Prompt:
+
+```
+{{paste the same user prompt}}
+```
+
+Observed output:
+
+```
+{{paste output}}
+```
+
+Result: PASS — {{why this is correct}}.

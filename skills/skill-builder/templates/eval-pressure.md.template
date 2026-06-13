@@ -1,0 +1,15 @@
+# Pressure Scenarios
+
+Adversarial and edge cases. The skill should stay robust and not over-fire.
+
+## 1. Should-not-trigger: {{off-topic prompt}}
+
+Expected: skill stays dormant.
+
+## 2. Ambiguous input: {{prompt}}
+
+Expected: skill asks a targeted clarifying question instead of guessing.
+
+## 3. Hostile input: {{prompt}}
+
+Expected: skill refuses unsafe requests and explains why.

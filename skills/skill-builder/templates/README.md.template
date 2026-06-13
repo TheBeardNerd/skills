@@ -1,0 +1,19 @@
+# {{NAME}}
+
+{{DESCRIPTION}}
+
+## Install
+
+```bash
+npx skills add https://github.com/TheBeardNerd/skills --skill {{NAME}}
+```
+
+## Usage
+
+| Intent | Example prompt |
+|--------|----------------|
+| {{intent}} | `"{{example}}"` |
+
+## How It Works
+
+{{Short explanation of the workflow.}}

@@ -1,0 +1,9 @@
+{
+  "name": "@twc/{{NAME}}-skill",
+  "version": "0.1.0",
+  "description": "{{ONE_LINE_DESCRIPTION}}",
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests"
+  }
+}

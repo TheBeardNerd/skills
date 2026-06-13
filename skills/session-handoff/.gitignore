@@ -1,13 +1,42 @@
+# Skill output (handoffs are written into the target project, not committed here)
 .ai/
-**/__pycache__/
-*.pyc
-*.pyo
 
-# Environment files
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.tox/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Node (skills ship package.json; npx installs)
+node_modules/
+
+# Editors/IDEs
+.idea/
+.vscode/
+
+# Logs & temp
+*.log
+*.tmp
+
+# Secrets, env & certificates
 .env
 .env.*
-
-# Common secret and certificate artifacts
+!.env.example
 *.pem
 *.key
 *.p12
@@ -17,7 +46,5 @@
 *.der
 *.jks
 *.keystore
-
-# Common local secret folders/files
 secrets/
 *.secret

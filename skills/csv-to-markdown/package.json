@@ -1,0 +1,9 @@
+{
+  "name": "@twc/csv-to-markdown-skill",
+  "version": "0.1.0",
+  "description": "Use when the user wants to convert a CSV file to a Markdown table, asks to turn a CSV into a table, or pastes CSV that n",
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests"
+  }
+}
