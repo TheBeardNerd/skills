@@ -1,6 +1,6 @@
 ---
 name: agent-builder
-description: Use when the user wants to build, design, or structure a Claude Code subagent — e.g. "build a subagent that reviews code changes", "make a test-runner agent", "should this be a subagent or a skill?", or "turn this workflow into a .claude/agents agent". Decides subagent-vs-other-artifact and the right topology, then scaffolds a native Claude Code subagent (a .claude/agents/<name>.md file: system prompt + tool permissions + model) that runs inside Claude Code using its built-in tools — plus a design blueprint. No standalone program.
+description: 'Use when the user wants to build, design, or structure a Claude Code subagent — e.g. "build a subagent that reviews code changes", "make a test-runner agent", "should this be a subagent or a skill?", or "turn this workflow into a .claude/agents agent". Decides subagent-vs-other-artifact and the right topology, then scaffolds a native Claude Code subagent (a .claude/agents/<name>.md file: system prompt + tool permissions + model) that runs inside Claude Code using its built-in tools — plus a design blueprint. No standalone program.'
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
