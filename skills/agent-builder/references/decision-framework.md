@@ -1,95 +1,74 @@
-# Agent Structure Decision Framework
+# Subagent Structure Decision Framework
 
-Sources: Anthropic, "Building Effective Agents"; OpenAI, "A Practical Guide to
-Building Agents." Work the gates top to bottom. The goal is to choose the *correct
-shape* before any code is written.
+Source: the Claude Code subagents documentation
+(https://code.claude.com/docs/en/sub-agents). Work the gates top to bottom. The goal
+is to choose the *correct artifact* before writing any Markdown — a subagent is one
+of several Claude Code building blocks, and it is the wrong choice surprisingly
+often.
 
-## Gate 0 — Does this even need an agent?
+## Gate 0 — Is a subagent even the right artifact?
 
-An **agent** is a system where an LLM *dynamically directs its own process and tool
-use* over multiple turns to accomplish a task. That power costs latency, tokens, and
-reliability. Most "AI feature" needs are met by something simpler. Spend an agent
-only where it earns its keep.
+A **subagent** is a Markdown file Claude *delegates to* during a session; it runs in
+an isolated context with its own tools and returns a summary. That isolation is the
+whole value — and the whole limitation. Spend a subagent only where isolation or a
+tool wall earns its keep.
 
-### The agent-vs-deterministic test
+### Route elsewhere if a simpler artifact fits
 
-Build an agent when the workflow has **at least one** of these (OpenAI's criteria):
+| The need is… | Deliver instead | Why |
+|--------------|-----------------|-----|
+| A rule that must apply to **every** session unprompted | **CLAUDE.md** | Subagents only run when delegated to; a standing rule belongs in project memory |
+| Something that fires **automatically on an event** (after edit, on commit) | a **hook** | The harness fires hooks; subagent delegation is model-driven, not event-driven |
+| A reusable prompt/workflow that should run in the **main thread's context** | a **Skill** (or slash command) | A skill loads into the current conversation; a subagent would needlessly start fresh and lose context |
+| A task with heavy **back-and-forth** / shared context across phases | the **main conversation** | A subagent starts cold and returns only a summary — isolation works against you |
+| External data/API access for the main thread | an **MCP server** | Subagents consume tools; they don't expose new ones to the session |
+
+### A subagent earns its keep when at least one holds
 
 | Signal | Example |
 |--------|---------|
-| **Complex decision-making** — nuanced judgment, exceptions, context | refund approval, fraud triage |
-| **Difficult-to-maintain rules** — brittle, sprawling rulesets | vendor security reviews |
-| **Heavy unstructured-data reliance** — language, documents, dialogue | processing an insurance claim |
+| **Verbose side-work** — floods the main context with output you won't reuse | running tests, fetching docs, triaging logs |
+| **Capability wall** — you want to constrain what it can do | a read-only code reviewer (no Edit/Write) |
+| **Self-contained** — the work returns a clean summary, little iteration | "research module X and report findings" |
+| **Reusable worker** — you keep spawning the same kind of worker | a standard reviewer/test-runner you invoke often |
 
-If none apply — the logic is a clean checklist a rules engine handles — **say so and
-recommend the deterministic solution**. Do not ship an agent for a `if/else`.
+If none apply, do the work in the main conversation (or write a Skill). Don't ship a
+subagent for a one-off inline task. The deterministic recommender encodes this gate:
+`recommend_structure.py`.
 
-### The "is it even an agent?" ladder (route elsewhere if simpler fits)
+## Gate 1 — Topology (how many subagents, who drives)
 
-| The need is... | Deliver instead | Why |
-|----------------|-----------------|-----|
-| One LLM call, maybe with retrieval/a tool | an **augmented LLM call** | No loop needed; lowest latency/cost |
-| Fixed, known sequence of LLM steps | a **workflow** (prompt chaining/routing) | Predefined code paths beat dynamic control when the path is known |
-| Dynamic, unpredictable control over many turns | an **agent** | Only here does model-directed looping pay off |
+Once a subagent is warranted, pick the **simplest** topology. Full sketches in
+[patterns.md](./patterns.md); the recommender encodes this table.
 
-Anthropic's rule: **find the simplest solution possible, and only increase
-complexity when it demonstrably improves outcomes.** Continue past this gate only
-when the dynamic, multi-turn, tool-using shape is genuinely required.
+| Topology | Use when | Cost |
+|----------|----------|------|
+| **Single subagent** | One focused job; isolated context or a tool wall. | Lowest |
+| **Parallel (main-driven)** | Independent investigations run at once; main thread synthesizes. | Medium |
+| **Chained (main-driven)** | Ordered stages, often with a capability split (review → fix). | Medium |
+| **Coordinator + nested** | A delegated task fans out *and* its intermediate noise must stay hidden. | High |
 
-## Gate 1 — Pick the pattern
-
-Workflows (predefined paths) vs agents (model-directed paths). Prefer the highest
-row that satisfies the task. Full sketches in [patterns.md](./patterns.md); the
-deterministic recommender encodes this table.
-
-### Workflows — predictable, orchestrated
-
-| Pattern | Use when | Cost |
-|---------|----------|------|
-| **Single augmented call** | One well-scoped pass (+ optional retrieval/tool) answers it. | Lowest |
-| **Prompt chaining** | Fixed sequential steps, each building on the last; gate-check between. | Low |
-| **Routing** | Inputs fall into distinct categories handled separately; classification is reliable. | Low |
-| **Parallelization** | Independent subtasks run at once (sectioning), or repeated votes raise confidence (voting). | Medium |
-| **Evaluator-optimizer** | Clear eval criteria + iterative refinement measurably helps (generate→critique→revise). | Medium |
-
-### Agents — model-directed
-
-| Pattern | Use when | Cost |
-|---------|----------|------|
-| **Single-loop agent** | One agent + tools runs a loop until an exit condition; the standard agent. | Medium |
-| **Orchestrator-workers / manager** | A lead agent *dynamically* decides subtasks (unknown up front) and delegates to specialized agents (agents-as-tools). | High |
-| **Decentralized / handoff** | Peer agents hand off full control to one another by specialization (triage → specialist). | High |
-| **Autonomous agent** | Open-ended; step count unpredictable; model trusted to drive until done, with guardrails + stop condition. | Highest |
-
-### How to choose
-
-1. Start at "single augmented call." Can one good pass do it? Ship that, not an agent.
-2. Fixed known steps? → prompt chaining. Distinct input types? → routing.
-3. Need speed across independent subtasks, or consensus? → parallelization.
-4. Checkable quality rubric + refinement helps? → evaluator-optimizer.
-5. Genuinely needs dynamic multi-turn tool control? → **single-loop agent first.**
-6. One agent's prompt/tools overflow (many if-then branches, >10–15 overlapping
-   tools, wrong-tool errors)? → split into manager or decentralized.
-7. Steps truly unknowable and high trust warranted? → autonomous, as a last resort.
-
-**Maximize a single agent first.** OpenAI: more agents give intuitive separation but
-add complexity and overhead; split only when a single agent with well-named tools
-*fails* to follow the logic or pick the right tool. Record *why* you escalated.
+**Maximize a single subagent first.** Most "multi-agent" needs are just the main
+conversation spawning one reusable subagent several times, or chaining two. Reach for
+nested (`Agent` in the subagent's tools) only with a written reason.
 
 ## Gate 2 — Components
 
-Every agent reduces to three components (OpenAI): **model**, **tools**,
-**instructions**. Design each per [components.md](./components.md).
+Design the three parts per [components.md](./components.md): the **system prompt**
+(role + "When invoked" steps + output format + stop condition), the **tools**
+(least-privilege allowlist), and the **model** (haiku for volume, opus for judgment,
+inherit otherwise).
 
 ## Gate 3 — Guardrails & human-in-the-loop
 
-Layered defense plus approval gates on risky actions. See
-[guardrails.md](./guardrails.md). An agent that can take irreversible actions
-without a guardrail or human checkpoint is not done.
+You configure, not code, guardrails per [guardrails.md](./guardrails.md): the tool
+wall first, then `permissionMode` (keep `default` so risky actions still prompt the
+user), then `PreToolUse` hooks for conditional rules. The prompt explains the
+boundaries; it does not enforce them.
 
 ## Output of this phase
 
 A short **blueprint** ([templates/blueprint.md](../templates/blueprint.md)): the
-Gate 0 verdict, the chosen pattern with a one-line rationale (and why not a simpler
-one), the components, the runtime loop, guardrails, and an eval plan. Show it before
-scaffolding.
+Gate-0 verdict (subagent or route-elsewhere), the topology with a one-line rationale,
+the components (system-prompt sketch, tool list, model), the guardrail config, and an
+eval plan. Show it before scaffolding.

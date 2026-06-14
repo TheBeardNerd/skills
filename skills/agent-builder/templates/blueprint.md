@@ -1,62 +1,55 @@
-# Agent Blueprint: <agent-name>
+# Subagent Blueprint: <name>
 
 > Filled during Phase 2 and shown to the user before scaffolding. Each section
-> records a decision and its rationale.
+> records a decision and its rationale. The deliverable is one
+> `.claude/agents/<name>.md` file — a Claude Code subagent, not a program.
 
-## 1. Verdict — is this an agent?
+## 1. Verdict — is this a subagent?
 
-- **Decision:** <agent | workflow | single augmented call — NOT an agent>
-- **Why:** <which Gate-0 signal applies: complex decision-making /
-  difficult-to-maintain rules / heavy unstructured data — or, if not an agent, why a
-  simpler shape suffices>
+- **Decision:** <subagent | NOT a subagent → CLAUDE.md / hook / skill / main-conversation / MCP>
+- **Why:** <which Gate-0 signal applies: verbose side-work / capability wall /
+  self-contained / reusable worker — or, if not a subagent, which simpler artifact
+  fits and why>
 
-> If "NOT an agent", stop here and recommend the simpler solution.
+> If "NOT a subagent", stop here and recommend the simpler artifact.
 
-## 2. Pattern
+## 2. Topology
 
-- **Pattern:** <single-loop | prompt-chaining | routing | parallelization |
-  evaluator-optimizer | manager | decentralized | autonomous>
-- **Why this and not something simpler:** <one line; the recommender's rationale +
-  your confirmation>
+- **Topology:** <single | parallel (main-driven) | chained (main-driven) | coordinator + nested>
+- **Why this and not something simpler:** <one line; the recommender's rationale + your confirmation>
 - **Recommender output:** <paste `recommend_structure.py` verdict>
 
 ## 3. Components
 
+### Identity
+- **name:** <kebab-case>
+- **description:** <trigger-first; what it does + WHEN to delegate; "use proactively" if it should auto-fire>
+- **scope:** <project (`.claude/agents/`) | user (`~/.claude/agents/`)>
+
 ### Model
-- **Default:** claude-opus-4-8 (baseline) → <downgrade plan per step, if any>
+- **model:** <haiku | sonnet | opus | inherit> — <why: volume vs judgment vs match-main>
 
-### Tools
-| Tool | Type | Risk | Purpose |
-|------|------|------|---------|
-| <name> | data/action/orchestration | low/med/high | <what it does> |
+### Tools (least privilege)
+| Tool | Why it's needed |
+|------|-----------------|
+| <Read/Grep/...> | <reason> |
 
-### Instructions (sketch)
-<numbered steps the agent follows, with edge-case branches and the explicit
-"you are done when ..." stop condition>
+- **Deliberately withheld:** <e.g. Edit/Write — this is a read-only worker>
 
-## 4. Runtime loop
+### System prompt (sketch)
+<role + "When invoked" numbered steps + edge cases + output format + the explicit
+"you are done when …" stop line>
 
-- **Loop:** Claude-native tool-use loop (`stop_reason == "tool_use"`).
-- **State:** append-only `messages` transcript.
-- **Stop conditions:** natural stop (final answer) + `max_turns = <N>`
-  + <budget / failure-threshold / done-tool, if any>.
+## 4. Guardrails (configuration, not code)
 
-## 5. Guardrails & human-in-the-loop
+- **Tool wall:** <the allowlist above is the primary guardrail>
+- **permissionMode:** <default (keep approvals) | plan | other — and why>
+- **PreToolUse hook:** <only if you must allow part of a tool and block the rest, e.g. read-only SQL>
 
-| Guardrail | Stage | Type | Action on trip |
-|-----------|-------|------|----------------|
-| <name> | input/output | relevance/safety/pii/moderation/rules/output | refuse/redact/escalate |
+## 5. Eval plan
 
-- **Human approval required for:** <high-risk tools / actions>
-
-## 6. Sub-agents (manager / decentralized only)
-
-| Sub-agent | Delegated when | Tools |
-|-----------|----------------|-------|
-| <name> | <condition> | <tools> |
-
-## 7. Eval plan
-
-- **Scenarios:** <2–3 realistic prompts the agent must handle>
-- **Success criteria:** <what "correct" looks like per scenario>
-- **Pressure cases:** <off-topic input, ambiguous input, hostile/jailbreak input>
+- **Scenarios:** <2–3 realistic tasks the subagent must handle>
+- **Success criteria:** <what a correct return looks like — including that it returns
+  a tight summary, not raw dumps>
+- **Pressure cases:** <off-topic delegation, ambiguous task, a request to do
+  something its tools forbid (it should decline / not be able to)>

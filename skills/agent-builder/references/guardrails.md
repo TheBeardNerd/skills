@@ -1,68 +1,81 @@
-# Guardrails & Human-in-the-Loop
+# Guardrails & Human-in-the-Loop (the Claude Code way)
 
-Guardrails manage privacy, safety, and reputational risk. No single guardrail
-suffices — think **layered defense**: stack specialized checks so a miss in one is
-caught by another. Combine LLM-based judges, rules-based filters (regex/blocklist),
-and a moderation pass. Pair guardrails with real auth, access control, and standard
-software security; guardrails are not a substitute for those.
+You do **not** hand-write guardrail functions or approval prompts for a Claude Code
+subagent — the harness already enforces permissions. Your guardrails are
+*configuration*: which tools the subagent gets, how its permission prompts behave,
+and (when you need finer control) hooks. Think in layers, tightest first.
 
-## Types of guardrails
+## Layer 1 — the tool wall (your primary guardrail)
 
-| Guardrail | Catches | How |
-|-----------|---------|-----|
-| **Relevance classifier** | Off-topic / out-of-scope input | LLM judge flags inputs outside the agent's remit |
-| **Safety classifier** | Jailbreaks, prompt injection | LLM/fine-tuned classifier marks unsafe attempts to extract the prompt or hijack the agent |
-| **PII filter** | Leaking personal data | Vet model output for PII before returning it |
-| **Moderation** | Hate, harassment, violence | Moderation API on inputs/outputs |
-| **Tool safeguards** | Risky tool calls | Rate each tool low/med/high (read-only vs write, reversibility, permissions, financial impact); gate high-risk ones |
-| **Rules-based** | Known threats | Blocklists, input length caps, regex (e.g. SQL-injection patterns) |
-| **Output validation** | Off-brand / unsafe responses | Prompt + content checks before the response ships |
+The `tools`/`disallowedTools` fields decide what the subagent *can do at all*. A
+capability the subagent doesn't have can't be misused, regardless of the prompt.
 
-## Where guardrails run
+- Read-only reviewer/researcher → `tools: Read, Grep, Glob, Bash` (no `Edit`/`Write`).
+- A subagent that should never reach the network → omit `WebFetch`/`WebSearch`/MCP.
+- Inherit-all-except → `disallowedTools: Write, Edit`.
 
-- **Input guardrails** run *before* the agent acts on user input (relevance,
-  safety, moderation, length). On a tripwire, short-circuit with a safe refusal
-  ("We cannot process this message").
-- **Output guardrails** run *before* a response or a high-risk tool call is
-  committed (PII, output validation, brand).
-- **Optimistic execution** (OpenAI's pattern): let the agent generate while
-  guardrails run concurrently; raise/halt if a tripwire fires. Faster than fully
-  serial checks.
+This is poka-yoke: prefer removing the tool over instructing "please don't use it."
 
-A guardrail can be a function (regex, length, blocklist) or an LLM call (a small
-classifier agent returning a structured `{flagged: bool, reason: str}`).
+## Layer 2 — permission mode (how risky calls are gated)
 
-## Tool risk ratings → automated actions
+`permissionMode` controls what happens when the subagent makes a call that needs
+approval. **This is the human-in-the-loop** — you don't build it, you choose it:
 
-Assign each action tool a risk rating and wire the consequence:
+| Mode | Behavior | Use for |
+|------|----------|---------|
+| `default` | Standard prompts; risky calls ask the user. | most subagents — keep the human checkpoint |
+| `plan` | Read-only exploration. | research/planning subagents |
+| `acceptEdits` | Auto-accept edits in the working dir. | trusted, scoped edit work |
+| `auto` | A classifier reviews commands/protected writes. | semi-autonomous runs |
+| `dontAsk` | Auto-deny anything that would prompt. | strict, allow-listed-only runs |
+| `bypassPermissions` | Skip prompts entirely. | **dangerous — avoid**; only sandboxed, low-stakes work |
 
-| Rating | Examples | Action |
-|--------|----------|--------|
-| Low | read-only lookups | run freely |
-| Medium | reversible writes | log; optional confirmation |
-| High | payments, deletes, external emails, irreversible writes | **pause for guardrail check and/or human approval before executing** |
+Default behavior already pauses for approval on irreversible/high-impact actions —
+so for a subagent that can take risky actions, **stay on `default`** and let the
+prompt reach the user. Reserve `bypassPermissions` for genuinely sandboxed contexts;
+it lets the subagent write to `.git`, `.claude`, etc. without asking.
 
-## Human-in-the-loop
+Note: background subagents auto-deny anything that would prompt; a high-risk action
+that needs approval should run in the foreground.
 
-A human checkpoint is a first-class safeguard, not an afterthought. Trigger it on:
-- **Exceeding failure/retry thresholds** — if the agent can't make progress or keeps
-  mis-parsing, hand control back to a human rather than looping.
-- **High-risk actions** — irreversible or high-impact tool calls (refunds, cancels,
-  large transactions, external comms) require explicit approval.
+## Layer 3 — conditional rules via hooks
 
-The agent must be able to **halt and transfer control back to the user** on failure
-or low confidence. Build this into the loop's stop conditions, not just the prompt.
+When the tool wall is too coarse (allow *some* uses of a tool, block others), add a
+`PreToolUse` hook in the subagent's frontmatter. The classic example is a DB reader
+that may run `SELECT` but not `INSERT/UPDATE/DELETE`:
 
-## Building guardrails (heuristic)
+```yaml
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "./scripts/validate-readonly-query.sh"
+```
 
-1. Start with **data privacy and content safety** guardrails.
-2. **Add new ones from real edge cases and failures** you observe — guardrails grow
-   with the agent.
-3. **Balance security and UX**: tune so legitimate users aren't blocked while
-   threats are.
+The hook reads the tool input as JSON on stdin and exits `2` to block (with a reason
+on stderr). This is the only place you write guardrail *code*, and only when needed.
+
+## Layer 4 — the system prompt (behavioral, not enforced)
+
+Prompt instructions ("only return failing tests", "if asked to modify data, refuse —
+you are read-only") shape behavior but are **not enforced** — a determined or
+confused run can ignore them. Use them to *explain* the boundaries the tool wall and
+hooks *enforce*. Never rely on the prompt alone for safety.
+
+## Choosing guardrails (heuristic)
+
+1. **Start at the tool wall** — give the least privilege the job needs.
+2. **Keep `permissionMode: default`** unless you have a reason to change it, so risky
+   actions still surface to the user.
+3. **Add a `PreToolUse` hook** only when you must allow part of a tool and block the
+   rest.
+4. **Restate the boundary in the prompt** so the subagent understands its lane.
 
 ## Minimum bar for this skill's gate
 
-The validator requires: at least one input guardrail present, and every tool marked
-`high` risk having an `approval`/human-in-the-loop path. An agent that can take
-irreversible action with no guardrail and no checkpoint fails the gate.
+The validator does not require guardrails (the harness enforces permissions by
+default), but it **warns** when `tools` is omitted — inheriting every tool is the
+opposite of least privilege. A subagent that takes irreversible actions should keep
+`permissionMode: default` (or unset) so approvals reach the user; flag it in the
+blueprint if you change that.
