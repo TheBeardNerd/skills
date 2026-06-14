@@ -1,123 +1,81 @@
-# Pattern Catalog (Claude-native)
+# Subagent Topology Catalog
 
-Each pattern with when-to-use and a minimal Claude-native sketch. All build on the
-**augmented LLM** — a model with tools, retrieval, and memory — looping via the
-Anthropic Messages API (`client.messages.create`, `stop_reason == "tool_use"`). See
-[runtime.md](./runtime.md) for the loop mechanics. **Default to the simplest pattern
-that works.**
+How many subagents, and who drives them. Each topology with when-to-use and how it
+runs inside Claude Code. **Default to a single subagent.** Every step up buys
+capability with coordination cost, more returned context, and new failure modes —
+escalate only with a written reason in the blueprint. See
+[execution-model.md](./execution-model.md) for how the harness runs each.
 
-## Building block — the augmented LLM call
+## Building block — one focused subagent
 
-```python
-resp = client.messages.create(
-    model="claude-opus-4-8",
-    max_tokens=1024,
-    system=INSTRUCTIONS,
-    tools=TOOLS,                 # JSON-schema tool defs
-    messages=[{"role": "user", "content": user_input}],
-)
+A single `.claude/agents/<name>.md`: a system prompt + a least-privilege tool set,
+running in its own context and returning a summary. This is the right answer most of
+the time. Reach for more subagents only when one genuinely can't hold the job.
+
+```markdown
+---
+name: code-reviewer
+description: Expert code review specialist. Use proactively after writing or modifying code.
+tools: Read, Grep, Glob, Bash
+model: inherit
+---
+You are a senior code reviewer. When invoked: 1) run git diff, 2) review changed
+files, 3) report issues by priority. Return only the findings; do not paste full files.
 ```
 
-If a single such call (optionally with retrieval/one tool) answers the task, you do
-not have an agent — and that is the right outcome. Ship it.
+If one well-scoped subagent answers the need, ship it — that is the right outcome.
 
-## Workflows
+## Single subagent (the default)
 
-### Prompt chaining
-Fixed sequential steps, each consuming the last; add a gate between steps to catch
-errors early.
-```python
-outline = call(model, "Outline: " + topic)
-if not gate_ok(outline):
-    raise ValueError("outline failed gate")
-draft = call(model, "Write from outline:\n" + outline)
-final = call(model, "Polish:\n" + draft)
-```
-Use for: outline→draft→polish, generate→translate, extract→format.
+One subagent, invoked by description match or by name. Use for: isolating verbose
+side-work (tests, doc fetches, log triage), enforcing a capability wall (read-only
+reviewer), or any self-contained job that returns a summary.
 
-### Routing
-Classify the input, then dispatch to a specialized prompt/tool/model. Mis-routing is
-the main risk — keep categories distinct and classification reliable.
-```python
-route = call(small_model, CLASSIFY_PROMPT + query)   # -> "billing" | "tech" | "sales"
-handler = HANDLERS[route]
-answer = handler(query)
-```
-Use for: customer-service triage, easy→small-model / hard→large-model.
+## Parallel subagents (main thread orchestrates)
 
-### Parallelization
-- **Sectioning**: split into independent subtasks, run concurrently, aggregate.
-- **Voting**: run the same task N times, take consensus/majority.
-```python
-import concurrent.futures as cf
-with cf.ThreadPoolExecutor() as ex:
-    parts = list(ex.map(work, subtasks))
-result = aggregate(parts)
-```
-Use for: independent sub-analyses for speed; multiple safety checks at once; voting
-for higher confidence.
+The **main conversation** spawns several subagents at once for independent
+investigations, then synthesizes. You usually build **one** reusable subagent
+definition and the main thread invokes it N times over different inputs.
 
-### Evaluator-optimizer
-Generator produces; evaluator critiques against a rubric; loop until it passes or a
-cap is hit (always set a stop condition).
-```python
-draft = generate(task)
-for _ in range(MAX_ROUNDS):
-    verdict = evaluate(draft)        # {pass: bool, feedback: str}
-    if verdict["pass"]:
-        break
-    draft = generate(task, feedback=verdict["feedback"])
-```
-Use for: literary translation, code that must pass criteria, iterative search.
+> "Research the authentication, database, and API modules in parallel using
+> separate subagents."
 
-## Agents
+Use when: independent areas can be explored concurrently and the paths don't depend
+on each other. Caution: each subagent's summary returns to the main context — many
+detailed returns can themselves bloat it. Keep each return lean.
 
-### Single-loop agent (the default agent)
-One agent with tools runs the deterministic loop until it stops calling tools or
-hits `max_turns`. This is the standard agent and what `scaffold_agent.py` emits by
-default. See [runtime.md](./runtime.md).
-```python
-while turns < MAX_TURNS:
-    resp = client.messages.create(model=..., system=..., tools=TOOLS, messages=messages)
-    messages.append({"role": "assistant", "content": resp.content})
-    if resp.stop_reason != "tool_use":
-        break                        # natural stop: a final answer
-    results = run_tools(resp.content)
-    messages.append({"role": "user", "content": results})
-```
+## Chained subagents (main thread orchestrates)
 
-### Orchestrator-workers / manager (agents-as-tools)
-A manager agent decides subtasks *dynamically* and calls specialized sub-agents
-exposed as tools, then synthesizes. The manager keeps control and the user-facing
-thread. Use when subtasks can't be predicted up front, or one agent's tools/prompt
-overflow.
-```python
-# Each sub-agent is wrapped as a tool the manager can call:
-TOOLS = [as_tool(research_agent), as_tool(writer_agent), as_tool(review_agent)]
-# Manager runs the single-loop above over these "tools".
-```
+The main conversation runs subagents **in sequence**, passing relevant context from
+one to the next. Often two focused definitions, not one.
 
-### Decentralized / handoff
-Peer agents transfer *full control* (and conversation state) to one another by
-specialization. A handoff is a tool that swaps the active agent. Use when no single
-agent needs to stay in control or synthesize — e.g. triage → specialist who takes
-over.
-```python
-active = triage_agent
-while not done:
-    resp = run_one_turn(active, messages)
-    if handoff := detect_handoff(resp):     # e.g. "transfer_to_orders"
-        active = AGENTS[handoff]             # new agent owns the thread now
-```
+> "Use the code-reviewer subagent to find performance issues, then use the optimizer
+> subagent to fix them."
 
-### Autonomous agent
-Open-ended; the model drives the loop with broad tools until the task is done.
-Highest risk. Mandatory: tight guardrails, sandboxed tools, human approval on
-irreversible actions, and a hard `max_turns` / budget stop. Only when the step
-count is genuinely unpredictable and the model can be trusted in the domain.
+Use when: stages are distinct and ordered (review → fix, research → draft → check),
+and a capability split helps (a read-only finder, then a writer).
+
+## Coordinator with nested subagents (advanced)
+
+A subagent that itself lists `Agent` in its `tools` spawns **nested** worker
+subagents — e.g. a reviewer that dispatches a verifier per finding. Only the
+coordinator's summary returns to the main conversation; the workers' intermediate
+output never reaches it. Requires Claude Code v2.1.172+.
+
+Use only when **both**: the delegated task fans out into parallel subtasks, **and**
+the intermediate output must stay out of the main conversation. Otherwise let the
+main thread spawn the workers (parallel topology) — it is simpler and just as
+capable. Background subagents past a fixed depth stop receiving the `Agent` tool, so
+nesting is self-limiting.
 
 ## Escalation discipline
 
-Every row below "single augmented call" buys capability with latency, cost, and new
-failure modes. Move down only with a written reason in the blueprint. For any agentic
-pattern, define guardrails and an explicit stop condition before scaffolding.
+| Topology | Use when | Cost |
+|----------|----------|------|
+| **Single subagent** | One focused job, isolated context or tool wall. | Lowest |
+| **Parallel (main-driven)** | Independent investigations at once. | Medium |
+| **Chained (main-driven)** | Ordered stages, often a capability split. | Medium |
+| **Coordinator + nested** | A delegated task fans out *and* its noise must stay hidden. | High |
+
+Maximize a single subagent first. Split only when one definition with a good
+description and the right tools *fails* to do the job. Record *why* you escalated.

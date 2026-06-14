@@ -1,36 +1,51 @@
 #!/usr/bin/env python3
-"""Hard-gate validator for a generated agent project.
+"""Hard-gate validator for a Claude Code subagent file.
 
-Enforces the non-negotiables of a sound agent (see references/runtime.md and
-references/guardrails.md):
-  - the loop has BOTH a natural stop condition AND a max_turns cap
-  - every tool has a non-empty description and a JSON input schema
-  - REGISTRY matches the declared tools
-  - at least one input guardrail exists
-  - every high-risk tool has a human-approval path
+Enforces the non-negotiables that decide whether a `.claude/agents/<name>.md`
+subagent even loads and behaves (see references/scaffold-spec.md and the docs at
+https://code.claude.com/docs/en/sub-agents):
+
+  - the file has parseable YAML frontmatter delimited by `---`
+  - `name` is present and kebab-case (Claude Code requires lowercase + hyphens)
+  - `description` is present and non-empty (Claude delegates off of it)
+  - the body (system prompt) is non-empty (it IS the subagent's behavior)
+  - `model`, if set, is a valid alias / full id / `inherit`
+  - no UI-only tools that never work inside a subagent are listed
   - no secret-like strings are committed
 
+Target may be a single `.md` file OR a directory (validates every `*.md` under it).
 Exit 0 = PASS. Any FAIL exits non-zero. Warnings never fail the gate unless
 --strict. Stdlib only.
 
 Usage:
-    python3 validate_agent.py ./my-agent [--strict] [--json]
+    python3 validate_agent.py ./.claude/agents/code-reviewer.md [--strict] [--json]
+    python3 validate_agent.py ./.claude/agents
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
-import os
-import py_compile
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REQUIRED_FILES = ("agent.py", "tools.py", "guardrails.py", "config.py",
-                  "requirements.txt", "README.md")
-MIN_TOOL_DESC = 20
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MODEL_ALIASES = {"sonnet", "opus", "haiku", "fable", "inherit"}
+FULL_MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.\-]*$")
+MIN_DESC = 30
+TRIGGER_CUES = ("use", "when", "after", "before", "proactively", "for ", "to ")
+
+# UI/session-bound tools that never function inside a subagent (hard fail).
+FORBIDDEN_TOOLS = {"AskUserQuestion", "EnterPlanMode", "ScheduleWakeup", "WaitForMcpServers"}
+# Works only when permissionMode is `plan` (warn).
+CONDITIONAL_TOOLS = {"ExitPlanMode"}
+# Known built-in internal tools (a generous superset; unknowns -> warning only).
+KNOWN_TOOLS = {
+    "Bash", "BashOutput", "KillShell", "KillBash", "Read", "Write", "Edit",
+    "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch",
+    "TodoWrite", "Task", "Agent", "Skill", "SlashCommand", "NotebookRead",
+} | FORBIDDEN_TOOLS | CONDITIONAL_TOOLS
 
 SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
@@ -38,8 +53,6 @@ SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 ]
-TEXT_SUFFIXES = {".py", ".md", ".txt", ".json", ".env", ".example", ".cfg"}
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules"}
 
 
 @dataclass
@@ -57,220 +70,201 @@ class Report:
         return not self.failures and not (strict and self.warnings)
 
 
-def load_module(path: Path):
-    """Import a stdlib-only module from a file path without polluting sys.modules."""
-    spec = importlib.util.spec_from_file_location(f"_agent_{path.stem}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # may raise
-    return module
+# --- minimal frontmatter parser (no third-party YAML) -------------------------
+
+def parse_frontmatter(text: str):
+    """Return (meta: dict, body: str) or (None, None) if no frontmatter.
+
+    Handles `key: value` scalars, `key: a, b, c` comma lists, and simple
+    block sequences (`- item`). Enough for subagent frontmatter.
+    """
+    if not text.startswith("---"):
+        return None, None
+    # split on the closing delimiter line
+    parts = re.split(r"(?m)^---[ \t]*$", text, maxsplit=2)
+    # parts[0] is "" (before first ---), parts[1] is frontmatter, parts[2] body
+    if len(parts) < 3:
+        return None, None
+    raw, body = parts[1], parts[2]
+
+    meta: dict = {}
+    current_key = None
+    for line in raw.splitlines():
+        if not line.strip() or line.strip().startswith("#"):
+            continue
+        seq = re.match(r"^[ \t]+-[ \t]+(.*)$", line)
+        if seq and current_key is not None:
+            meta.setdefault(current_key, [])
+            if isinstance(meta[current_key], list):
+                meta[current_key].append(seq.group(1).strip())
+            continue
+        kv = re.match(r"^([A-Za-z0-9_]+):[ \t]*(.*)$", line)
+        if kv:
+            key, val = kv.group(1), kv.group(2).strip()
+            current_key = key
+            if val == "":
+                meta[key] = []          # may become a block list on following lines
+            else:
+                meta[key] = val
+    return meta, body
 
 
-def check_required(report: Report, d: Path) -> None:
-    for rel in REQUIRED_FILES:
-        if (d / rel).is_file():
-            report.ok(f"{rel} present.")
+def as_tool_list(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        items = [str(v).strip() for v in value]
+    else:
+        items = [p.strip() for p in str(value).split(",")]
+    return [p for p in items if p]
+
+
+def base_tool_name(tool: str) -> str:
+    """`Agent(worker, x)` -> `Agent`; leaves plain names and mcp__* untouched."""
+    return tool.split("(", 1)[0].strip()
+
+
+# --- checks -------------------------------------------------------------------
+
+def validate_file(path: Path) -> Report:
+    report = Report(target=path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        report.fail(f"could not read file: {exc}")
+        return report
+
+    meta, body = parse_frontmatter(text)
+    if meta is None:
+        report.fail("no YAML frontmatter found (file must start with a `---` block).")
+        return report
+    report.ok("frontmatter block parsed.")
+
+    # name -------------------------------------------------------------------
+    name = meta.get("name")
+    if not name or not isinstance(name, str):
+        report.fail("`name` is missing (required).")
+    elif not NAME_RE.match(name):
+        report.fail(f"`name` '{name}' must be kebab-case (lowercase letters, digits, hyphens).")
+    else:
+        report.ok(f"name = {name!r} (kebab-case).")
+        if name != path.stem:
+            report.warn(f"name {name!r} != filename {path.stem!r}; loads fine but the convention is to match.")
+
+    # description ------------------------------------------------------------
+    desc = (meta.get("description") or "")
+    desc = desc if isinstance(desc, str) else ""
+    if not desc.strip():
+        report.fail("`description` is missing/empty (Claude delegates based on it).")
+    else:
+        report.ok("description present.")
+        if len(desc) < MIN_DESC:
+            report.warn(f"description is short ({len(desc)} chars) — say WHAT it does and WHEN to use it.")
+        if not any(cue in desc.lower() for cue in TRIGGER_CUES):
+            report.warn("description has no trigger cue (use/when/after/proactively) — auto-delegation may not fire.")
+
+    # body / system prompt ---------------------------------------------------
+    if not (body or "").strip():
+        report.fail("system prompt body is empty (it defines the subagent's behavior).")
+    else:
+        report.ok("system prompt body present.")
+        if "when invoked" not in body.lower() and not re.search(r"(?m)^\s*1\.", body):
+            report.warn("system prompt has no 'When invoked' steps — focused, stepwise prompts delegate better.")
+
+    # model ------------------------------------------------------------------
+    model = meta.get("model")
+    if model is not None:
+        model = str(model).strip()
+        if model in MODEL_ALIASES or FULL_MODEL_RE.match(model):
+            report.ok(f"model = {model!r}.")
         else:
-            report.fail(f"{rel} is missing.")
+            report.fail(f"`model` {model!r} is invalid (use sonnet/opus/haiku/fable, a claude-* id, or inherit).")
 
-
-def check_compile(report: Report, d: Path) -> None:
-    bad = []
-    for py in sorted(d.glob("*.py")):
-        try:
-            py_compile.compile(str(py), doraise=True)
-        except py_compile.PyCompileError as exc:
-            bad.append(f"{py.name}: {exc.msg}")
-    if bad:
-        report.fail("scripts failed to compile: " + "; ".join(bad))
+    # tools ------------------------------------------------------------------
+    tools = as_tool_list(meta.get("tools"))
+    disallowed = as_tool_list(meta.get("disallowedTools"))
+    if "tools" not in meta:
+        report.warn("no `tools` field — subagent inherits ALL tools. Prefer a least-privilege allowlist.")
     else:
-        report.ok("all top-level .py files compile.")
+        bad = sorted({base_tool_name(t) for t in tools} & FORBIDDEN_TOOLS)
+        if bad:
+            report.fail("tools list UI-only tools that never work in a subagent: " + ", ".join(bad))
+        cond = sorted({base_tool_name(t) for t in tools} & CONDITIONAL_TOOLS)
+        if cond:
+            report.warn(f"{', '.join(cond)} only works with permissionMode: plan.")
+        unknown = sorted(
+            t for t in tools
+            if base_tool_name(t) not in KNOWN_TOOLS and not t.startswith("mcp__")
+        )
+        if unknown:
+            report.warn("unrecognized tool name(s) (typo? MCP/new tool?): " + ", ".join(unknown))
+        if not report.failures:
+            report.ok(f"{len(tools)} tool(s) declared (least-privilege allowlist).")
+    if disallowed and tools:
+        report.warn("both `tools` and `disallowedTools` set — disallowedTools applies first, then tools.")
 
-
-def check_config(report: Report, d: Path) -> None:
-    cfg_path = d / "config.py"
-    if not cfg_path.is_file():
-        return
-    try:
-        cfg = load_module(cfg_path)
-    except Exception as exc:
-        report.fail(f"config.py could not be imported: {exc}")
-        return
-    mt = getattr(cfg, "MAX_TURNS", None)
-    if not isinstance(mt, int) or mt <= 0:
-        report.fail("config.MAX_TURNS must be a positive int (the hard stop cap).")
-    else:
-        report.ok(f"config.MAX_TURNS = {mt} (hard stop present).")
-    if not getattr(cfg, "MODEL", ""):
-        report.fail("config.MODEL is missing/empty.")
-    else:
-        report.ok(f"config.MODEL = {cfg.MODEL!r}.")
-    instr = getattr(cfg, "INSTRUCTIONS", "") or ""
-    if not instr.strip():
-        report.fail("config.INSTRUCTIONS is empty.")
-    elif "you are done when" not in instr.lower():
-        report.warn("INSTRUCTIONS lack an explicit stop instruction ('you are done when ...').")
-    else:
-        report.ok("INSTRUCTIONS present with a stop instruction.")
-
-
-def check_agent_loop(report: Report, d: Path) -> set:
-    """Returns the set of high-risk tool names referenced, for cross-checks."""
-    agent_path = d / "agent.py"
-    if not agent_path.is_file():
-        return set()
-    src = agent_path.read_text(encoding="utf-8")
-    if "stop_reason" not in src:
-        report.fail("agent.py has no `stop_reason` check (no natural stop condition).")
-    else:
-        report.ok("agent.py checks stop_reason (natural stop present).")
-    if "MAX_TURNS" not in src:
-        report.fail("agent.py never references MAX_TURNS (no hard loop cap).")
-    else:
-        report.ok("agent.py references MAX_TURNS (hard cap wired).")
-    if "tool_result" not in src:
-        report.fail("agent.py never builds tool_result blocks (tool loop incomplete).")
-    else:
-        report.ok("agent.py returns tool_result blocks to the model.")
-    if "request_human_approval" not in src:
-        report.warn("agent.py does not call request_human_approval; high-risk tools won't gate.")
-    return set()
-
-
-def check_tools(report: Report, d: Path) -> set:
-    tools_path = d / "tools.py"
-    if not tools_path.is_file():
-        return set()
-    try:
-        mod = load_module(tools_path)
-    except Exception as exc:
-        report.fail(f"tools.py could not be imported: {exc}")
-        return set()
-    schemas = getattr(mod, "TOOL_SCHEMAS", None)
-    registry = getattr(mod, "REGISTRY", {}) or {}
-    high = set(getattr(mod, "HIGH_RISK_TOOLS", []) or [])
-    if schemas is None:
-        report.fail("tools.py defines no TOOL_SCHEMAS.")
-        return high
-    if not isinstance(schemas, list):
-        report.fail("TOOL_SCHEMAS must be a list.")
-        return high
-    if not schemas:
-        report.warn("TOOL_SCHEMAS is empty — an agent with no tools is unusual.")
-    names = []
-    for s in schemas:
-        n = s.get("name", "<unnamed>")
-        names.append(n)
-        desc = (s.get("description") or "").strip()
-        if not desc:
-            report.fail(f"tool '{n}' has an empty description (the model picks tools from it).")
-        elif len(desc) < MIN_TOOL_DESC:
-            report.warn(f"tool '{n}' description is short ({len(desc)} chars).")
-        if "input_schema" not in s:
-            report.fail(f"tool '{n}' has no input_schema.")
-    missing = [n for n in names if n not in registry]
-    if missing:
-        report.fail("tools missing from REGISTRY: " + ", ".join(missing))
-    bad_high = [n for n in high if n not in names]
-    if bad_high:
-        report.fail("HIGH_RISK_TOOLS names not in TOOL_SCHEMAS: " + ", ".join(bad_high))
-    if schemas and not missing and not bad_high:
-        report.ok(f"{len(schemas)} tool(s) declared, registered, and schema-checked.")
-    return high
-
-
-def check_guardrails(report: Report, d: Path, high: set) -> None:
-    g_path = d / "guardrails.py"
-    if not g_path.is_file():
-        return
-    try:
-        mod = load_module(g_path)
-    except Exception as exc:
-        report.fail(f"guardrails.py could not be imported: {exc}")
-        return
-    inputs = getattr(mod, "INPUT_GUARDRAILS", None)
-    if not inputs:
-        report.fail("no INPUT_GUARDRAILS defined (need at least one).")
-    else:
-        report.ok(f"{len(inputs)} input guardrail(s) defined.")
-    if not callable(getattr(mod, "run_input_guardrails", None)):
-        report.fail("guardrails.run_input_guardrails is missing.")
-    if high:
-        ok = callable(getattr(mod, "requires_approval", None)) and \
-             callable(getattr(mod, "request_human_approval", None))
-        if ok:
-            report.ok(f"high-risk tools ({', '.join(sorted(high))}) have an approval path.")
-        else:
-            report.fail("high-risk tools exist but no requires_approval/request_human_approval.")
-
-
-def check_secrets(report: Report, d: Path) -> None:
-    hits = []
-    for root, dirs, files in os.walk(d):
-        dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-        for f in files:
-            p = Path(root) / f
-            if p.suffix.lower() not in TEXT_SUFFIXES and p.name != ".env.example":
-                continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if any(pat.search(text) for pat in SECRET_PATTERNS):
-                hits.append(p.name)
-    if hits:
-        report.fail("possible secrets in: " + ", ".join(sorted(set(hits))))
+    # secrets ----------------------------------------------------------------
+    if any(pat.search(text) for pat in SECRET_PATTERNS):
+        report.fail("possible secret/credential string committed in the file.")
     else:
         report.ok("no secret-like strings detected.")
 
-
-def validate(d: Path) -> Report:
-    report = Report(target=d)
-    if not d.is_dir():
-        report.fail(f"'{d}' is not a directory.")
-        return report
-    check_required(report, d)
-    check_compile(report, d)
-    check_config(report, d)
-    check_agent_loop(report, d)
-    high = check_tools(report, d)
-    check_guardrails(report, d, high)
-    check_secrets(report, d)
     return report
 
 
-def render(report: Report, strict: bool) -> str:
-    lines = [f"Validating agent: {report.target}"]
-    lines += [f"  PASS  {m}" for m in report.passes]
-    lines += [f"  WARN  {m}" for m in report.warnings]
-    lines += [f"  FAIL  {m}" for m in report.failures]
-    lines.append("")
-    if report.passed(strict):
-        lines.append("RESULT: PASS — agent clears the hard gate.")
+def collect_targets(target: Path) -> list[Path]:
+    if target.is_dir():
+        return sorted(p for p in target.rglob("*.md") if p.name.lower() != "readme.md")
+    return [target]
+
+
+def render(reports: list[Report], strict: bool) -> str:
+    lines: list[str] = []
+    all_pass = True
+    for r in reports:
+        lines.append(f"Validating subagent: {r.target}")
+        lines += [f"  PASS  {m}" for m in r.passes]
+        lines += [f"  WARN  {m}" for m in r.warnings]
+        lines += [f"  FAIL  {m}" for m in r.failures]
+        lines.append("")
+        all_pass = all_pass and r.passed(strict)
+    if all_pass:
+        lines.append(f"RESULT: PASS — {len(reports)} subagent(s) clear the hard gate.")
     else:
-        n = len(report.failures) + (len(report.warnings) if strict else 0)
+        n = sum(len(r.failures) + (len(r.warnings) if strict else 0) for r in reports)
         lines.append(f"RESULT: FAIL — {n} issue(s) must be fixed.")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate a generated agent project.")
-    parser.add_argument("target", type=Path, help="path to the agent directory")
+    parser = argparse.ArgumentParser(description="Validate a Claude Code subagent file or directory.")
+    parser.add_argument("target", type=Path, help="path to a .md subagent or a directory of them")
     parser.add_argument("--strict", action="store_true", help="treat warnings as failures")
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args(argv)
 
-    report = validate(args.target.resolve())
+    target = args.target.resolve()
+    if not target.exists():
+        print(f"RESULT: FAIL — '{target}' does not exist.")
+        return 1
+    targets = collect_targets(target)
+    if not targets:
+        print(f"RESULT: FAIL — no .md subagent files found under '{target}'.")
+        return 1
+
+    reports = [validate_file(p) for p in targets]
+    all_pass = all(r.passed(args.strict) for r in reports)
     if args.json:
-        print(json.dumps({
-            "target": str(report.target),
-            "passed": report.passed(args.strict),
-            "failures": report.failures,
-            "warnings": report.warnings,
-            "passes": report.passes,
-        }, indent=2))
+        print(json.dumps([{
+            "target": str(r.target),
+            "passed": r.passed(args.strict),
+            "failures": r.failures,
+            "warnings": r.warnings,
+            "passes": r.passes,
+        } for r in reports], indent=2))
     else:
-        print(render(report, args.strict))
-    return 0 if report.passed(args.strict) else 1
+        print(render(reports, args.strict))
+    return 0 if all_pass else 1
 
 
 if __name__ == "__main__":

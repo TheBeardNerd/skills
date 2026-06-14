@@ -1,91 +1,78 @@
-# Components: Model, Tools, Instructions
+# Components: System Prompt, Tools, Model
 
-Every agent reduces to three components (OpenAI). Design each deliberately — most
-agent failures trace to a weak tool description or a vague instruction, not a weak
-model.
+A Claude Code subagent reduces to three design choices, all expressed in one
+Markdown file: the **system prompt** (the body), the **tool permissions**
+(`tools`/`disallowedTools`), and the **model**. Most subagent failures trace to a
+vague system prompt or the wrong tool wall — not the model. Design each
+deliberately.
+
+## System prompt (the body)
+
+The body *is* the subagent's behavior. It runs from a **cold start** — the subagent
+sees none of your conversation (see [execution-model.md](./execution-model.md)) — so
+it must be self-contained. Follow the shape the official examples use:
+
+- **Open with role + domain**: "You are a senior code reviewer ensuring high
+  standards of quality and security."
+- **"When invoked:" numbered steps** — the first concrete actions from a cold start
+  ("1. Run `git diff` to see recent changes. 2. Focus on modified files. 3. ...").
+- **A checklist or process** the subagent applies (what to look for, how to work).
+- **Edge cases**: what to do when input is missing or ambiguous ("if there is no
+  diff, say so and stop") — the subagent can't ask the user mid-run
+  (`AskUserQuestion` is unavailable to subagents), so bake decisions in.
+- **Output format**: state *exactly* what it returns to the main conversation and how
+  it's structured. This is critical — the whole point is returning a tight summary,
+  not dumping raw logs/files back into the main context.
+- **Stop condition in prose**: "You are done when … — then return the summary."
+
+Derive steps from real SOPs/policies where they exist; don't invent procedure. Keep
+it focused: one subagent, one job. A sprawling prompt is a sign you want two
+subagents (see [patterns.md](./patterns.md)).
+
+## Tools = permissions (least privilege)
+
+The `tools` field is the capability wall. **Omitting it inherits ALL tools**
+(including MCP) — almost never what you want. List the minimum:
+
+- **Read-only worker** (reviewer, researcher): `Read, Grep, Glob, Bash` — no `Edit`,
+  no `Write`.
+- **Worker that fixes things** (debugger): add `Edit` (and `Write` if it creates
+  files).
+- **Two ways to scope**: `tools` is an allowlist; `disallowedTools` is a denylist
+  removed from the inherited set (`disallowedTools: Write, Edit`). If both are set,
+  `disallowedTools` applies first, then `tools` resolves against the remainder.
+
+Built-in tool names (exact): `Read`, `Write`, `Edit`, `MultiEdit`, `Bash`, `Glob`,
+`Grep`, `WebFetch`, `WebSearch`, `NotebookEdit`, `TodoWrite`, `Skill`,
+`SlashCommand`, `Agent` (spawns nested subagents). MCP tools: `mcp__<server>__<tool>`.
+
+**Never list** `AskUserQuestion`, `EnterPlanMode`, `ScheduleWakeup`,
+`WaitForMcpServers` — UI/session-bound, never function in a subagent.
+`ExitPlanMode` only with `permissionMode: plan`. To preload a skill's content use the
+`skills` field, not `Skill` in `tools`.
+
+The tool wall is poka-yoke for capability: a reviewer that *cannot* write can't
+accidentally edit your code, no matter what the prompt says. Prefer a tighter tool
+list over prompt instructions like "don't edit files."
 
 ## Model
 
-Different models trade off capability, latency, and cost. Not every step needs the
-smartest model — classification or retrieval can run on a small fast one; a refund
-decision wants a capable one. You may mix models across steps.
+`model`: `sonnet` | `opus` | `haiku` | `fable` | a full id (`claude-opus-4-8`) |
+`inherit` (default). Match capability to the work:
 
-Principled approach:
-1. **Set up evals** to establish a performance baseline.
-2. **Prototype with the most capable model** (default `claude-opus-4-8`) for every
-   step to hit the accuracy target first — don't prematurely limit ability.
-3. **Then downgrade** individual steps to smaller/faster models (e.g. Haiku) where
-   evals show no loss. This diagnoses where small models succeed or fail.
+- **`haiku`** — high-volume, low-judgment work: running tests, searching, triaging
+  logs. Cheap and fast; the cost lever.
+- **`sonnet`** — balanced default for analysis (code review, data work).
+- **`opus`** — judgment-heavy or high-stakes reasoning.
+- **`inherit`** — use the main conversation's model; good when the subagent's work is
+  as demanding as the main thread's.
 
-Record the model per step in the blueprint.
-
-## Tools
-
-Tools extend the agent to read context and take action. Three types (OpenAI):
-
-| Type | Purpose | Examples |
-|------|---------|----------|
-| **Data** | Retrieve context to execute the workflow | query a DB/CRM, read a PDF, web search |
-| **Action** | Change state / interact with systems | send email, update a record, file a ticket |
-| **Orchestration** | Other agents exposed as tools | research agent, writer agent (manager pattern) |
-
-### Tool design (the agent-computer interface)
-
-The tool description is how the model decides *whether and how* to call it — treat
-it like a function signature you're documenting for a careful but literal colleague.
-Anthropic calls this the ACI, and says invest in it as much as the human-facing UX.
-
-- **Standardize the definition**: clear name, typed parameters, a description that
-  states what it does, when to use it, and what it returns.
-- **Include example usage and edge cases**; state boundaries explicitly.
-- **Pick a format natural to the model.** Avoid formats that demand bookkeeping the
-  model is bad at (counting lines, escaping). Give it room to "think" before
-  committing to a rigid structure.
-- **Poka-yoke** (mistake-proof) the interface: design parameters so wrong calls are
-  hard — e.g. require an absolute path instead of a relative one; use enums for
-  fixed choices; make destructive params explicit.
-- **Reusable, many-to-many**: one well-documented tool shared across agents beats
-  redundant near-duplicates. Overlapping/duplicative tools cause wrong-tool errors —
-  the real trigger for splitting into multiple agents (not raw tool count; some
-  agents handle 15+ distinct tools, others struggle below 10 overlapping ones).
-- **Test extensively.** Run many example inputs through each tool in isolation.
-
-Claude-native tool definition shape:
-```python
-{
-  "name": "get_order",
-  "description": "Look up an order by its ID. Use when the user references an "
-                 "order number. Returns status, items, and ship date as JSON. "
-                 "Returns {\"error\": \"not_found\"} if the ID is unknown.",
-  "input_schema": {
-    "type": "object",
-    "properties": {"order_id": {"type": "string", "description": "e.g. 'A-10423'"}},
-    "required": ["order_id"],
-  },
-}
-```
-
-## Instructions
-
-Clear instructions reduce ambiguity and cut errors more than any other lever.
-
-- **Use existing docs**: derive routines from current SOPs, support scripts, policy
-  docs, or KB articles — don't invent procedure from scratch.
-- **Break tasks into explicit numbered steps**; each step maps to a concrete action
-  or output (ask for the order number; call `get_order`; ...). Specify even the
-  wording of user-facing messages where it matters.
-- **Capture edge cases**: anticipate missing info, unexpected questions, and add
-  conditional branches ("if no order number, ask for it before continuing").
-- **State the stop condition in prose**: "You are done when ... — then give the
-  final answer without calling more tools." The model's natural stop (no tool call)
-  is your loop's exit; instructions must make "done" unambiguous.
-- **Template over proliferation**: a single base prompt with policy variables
-  (`{{user_tier}}`, `{{allowed_actions}}`) scales better than many bespoke prompts.
-- You can use a capable model to *generate* a first-draft instruction set from a
-  policy document, then refine.
+Principled approach: start capable enough to hit the quality bar, then downgrade
+high-volume steps to `haiku` where quality holds.
 
 ## Putting it together
 
-The scaffold wires these into `config.py` (model + instructions), `tools.py` (tool
-schemas + bodies + registry), and `guardrails.py`. Keep each component legible and
-independently testable — that is what makes the agent maintainable.
+These three map straight onto the spec consumed by `scaffold_agent.py`:
+`system_prompt` → body, `tools`/`disallowedTools` → permissions, `model` → model.
+Keep the prompt focused and the tool list tight — that is what makes a subagent both
+safe and good at its one job.

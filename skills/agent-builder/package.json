@@ -1,7 +1,7 @@
 {
   "name": "@twc/agent-builder-skill",
   "version": "0.1.0",
-  "description": "Use when the user wants to build, design, or structure an AI agent \u2014 e.g. \"build an agent that triages support tickets\",",
+  "description": "Use when the user wants to build, design, or structure a Claude Code subagent (a .claude/agents/<name>.md file: system prompt + tool permissions + model) that runs inside Claude Code.",
   "license": "MIT",
   "scripts": {
     "test": "python3 -m unittest discover -s tests"
